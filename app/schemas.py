@@ -7,7 +7,13 @@
   - start_end_order_error
   - duplicate_window_id
   - too_many_windows
+  - too_many_advertisers
+  - duplicate_required_id（必播列表内部重复）
+  - required_id_not_found（必播 id 不在窗口表中）
+  - required_count_invalid（必播列表数量不在 1..3）
 """
+
+from typing import Annotated
 
 from pydantic import (
     BaseModel,
@@ -24,6 +30,7 @@ from .solver import (
     AD_MAX_LIMIT,
     AD_MAX_WINDOWS,
     MAX_LIMIT,
+    MAX_REQUIRED,
     MAX_TIME_MS,
     MAX_VALUE,
     MAX_WINDOWS,
@@ -33,6 +40,9 @@ ERR_START_END_ORDER = "start_end_order_error"
 ERR_DUPLICATE_ID = "duplicate_window_id"
 ERR_TOO_MANY_WINDOWS = "too_many_windows"
 ERR_TOO_MANY_ADVERTISERS = "too_many_advertisers"
+ERR_DUPLICATE_REQUIRED = "duplicate_required_id"
+ERR_REQUIRED_NOT_FOUND = "required_id_not_found"
+ERR_REQUIRED_COUNT = "required_count_invalid"
 
 # 错误信息里重复 id 最多列出的数量，避免响应体无界
 _REPORT_LIMIT = 100
@@ -103,12 +113,21 @@ class Batch(BaseModel):
 
 
 class AdvertiserBatch(BaseModel):
-    """带广告主约束排期批次：独立的窗口数、数量上限与广告主数规模上限。"""
+    """带广告主约束排期批次：独立的窗口数、数量上限与广告主数规模上限。
+
+    required_ids 为可选必播承诺：给定 1..3 个窗口 id（互不重复、必须存在），
+    求解器在搜索过程中强制纳入它们；承诺之间无解时求解器返回不可排期。
+    缺省（不传）时旧请求的结果与响应格式完全不变。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     limit: StrictInt = Field(ge=1, le=AD_MAX_LIMIT)
     windows: list[AdvertiserWindow]
+    # 必播 id 与窗口 id 一致：非空严格字符串（bool 不被接受）。
+    required_ids: list[Annotated[StrictStr, Field(min_length=1)]] | None = (
+        Field(default=None)
+    )
 
     @model_validator(mode="after")
     def _validate_batch(self):
@@ -151,4 +170,46 @@ class AdvertiserBatch(BaseModel):
                     "actual": len(advertisers),
                 },
             )
+
+        if self.required_ids is not None:
+            required = self.required_ids
+            if not 1 <= len(required) <= MAX_REQUIRED:
+                raise PydanticCustomError(
+                    ERR_REQUIRED_COUNT,
+                    "required_ids must contain between 1 and {max_required} "
+                    "items",
+                    {
+                        "min_required": 1,
+                        "max_required": MAX_REQUIRED,
+                        "actual": len(required),
+                    },
+                )
+            # 必播列表内部重复：参数错误（不是不可排期）。
+            req_seen: set[str] = set()
+            req_dup: set[str] = set()
+            for rid in required:
+                if rid in req_seen:
+                    req_dup.add(rid)
+                else:
+                    req_seen.add(rid)
+            if req_dup:
+                dup_list = sorted(req_dup)
+                raise PydanticCustomError(
+                    ERR_DUPLICATE_REQUIRED,
+                    "duplicate required id(s): {ids}",
+                    {"ids": ", ".join(dup_list), "duplicate_count": len(dup_list)},
+                )
+            # 必播 id 不存在于窗口表：参数错误。
+            missing = sorted(rid for rid in required if rid not in seen)
+            if missing:
+                shown = missing[:_REPORT_LIMIT]
+                extra = len(missing) - len(shown)
+                detail = ", ".join(shown)
+                if extra:
+                    detail += f" (and {extra} more)"
+                raise PydanticCustomError(
+                    ERR_REQUIRED_NOT_FOUND,
+                    "required id(s) not found in windows: {ids}",
+                    {"ids": detail, "missing_count": len(missing)},
+                )
         return self

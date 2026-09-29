@@ -8,28 +8,38 @@
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .schemas import (
     AdvertiserBatch,
     Batch,
     ERR_DUPLICATE_ID,
+    ERR_DUPLICATE_REQUIRED,
+    ERR_REQUIRED_COUNT,
+    ERR_REQUIRED_NOT_FOUND,
     ERR_TOO_MANY_ADVERTISERS,
     ERR_TOO_MANY_WINDOWS,
 )
-from .solver import solve, solve_with_advertisers
+from .solver import UnschedulableError, solve, solve_with_advertisers
 
 logger = logging.getLogger("scheduling")
+
+# 运营页面（必播选择态）静态文件。
+_PAGE_PATH = Path(__file__).resolve().parent / "static" / "index.html"
 
 # Pydantic v2 错误类型 -> 对外稳定错误码
 _CODE_MAP = {
     ERR_DUPLICATE_ID: "DUPLICATE_ID",
     ERR_TOO_MANY_WINDOWS: "TOO_MANY_WINDOWS",
     ERR_TOO_MANY_ADVERTISERS: "TOO_MANY_ADVERTISERS",
+    ERR_DUPLICATE_REQUIRED: "DUPLICATE_REQUIRED_ID",
+    ERR_REQUIRED_NOT_FOUND: "REQUIRED_ID_NOT_FOUND",
+    ERR_REQUIRED_COUNT: "REQUIRED_COUNT_INVALID",
     "start_end_order_error": "INVALID_INTERVAL",
     "missing": "MISSING_FIELD",
     "value_error": "INVALID_VALUE",
@@ -92,6 +102,13 @@ async def _on_validation_error(request: Request, exc: RequestValidationError):
             d["loc"] = ["windows"]
         if d["code"] == "TOO_MANY_ADVERTISERS" and not loc:
             d["loc"] = ["windows"]
+        # 必播列表相关的模型级错误定位到 required_ids。
+        if d["code"] in (
+            "DUPLICATE_REQUIRED_ID",
+            "REQUIRED_ID_NOT_FOUND",
+            "REQUIRED_COUNT_INVALID",
+        ) and not loc:
+            d["loc"] = ["required_ids"]
 
     status = 400 if any(d["code"] == "INVALID_JSON" for d in details) else 422
     return JSONResponse(
@@ -125,6 +142,13 @@ async def healthz():
     return {"status": "ok"}
 
 
+@app.get("/", include_in_schema=False)
+async def operations_page():
+    # 运营排期页面：必播选择态与页面提交内容都来自同一次合法求解响应；
+    # 任何失败都会清空结果，页面上不存在可提交的旧排期。
+    return HTMLResponse(_PAGE_PATH.read_text(encoding="utf-8"))
+
+
 @app.post("/api/v1/schedules")
 async def create_schedule(batch: Batch):
     windows = [
@@ -144,10 +168,35 @@ async def create_advertiser_schedule(batch: AdvertiserBatch):
         for w in batch.windows
     ]
     # 纯 CPU：排序 O(n log n) + DP O(n * limit * A)（n<=2000, limit<=20, A<=8），
-    # 放到线程池避免阻塞事件循环。
-    profit, selections = await asyncio.get_running_loop().run_in_executor(
-        None, solve_with_advertisers, batch.limit, windows
-    )
+    # 必播模式额外一维 m+1（m<=3）；放到线程池避免阻塞事件循环。
+    try:
+        profit, selections = await asyncio.get_running_loop().run_in_executor(
+            None,
+            solve_with_advertisers,
+            batch.limit,
+            windows,
+            batch.required_ids,
+        )
+    except UnschedulableError as exc:
+        # 必播承诺合法但互相冲突：明确不可排期，不给出部分方案。
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "UNSCHEDULABLE",
+                    "message": (
+                        "no feasible schedule contains all required windows"
+                    ),
+                    "details": [
+                        {
+                            "loc": ["required_ids"],
+                            "code": "UNSCHEDULABLE",
+                            "params": {"required_ids": exc.required_ids},
+                        }
+                    ],
+                }
+            },
+        )
     return {
         "profit": profit,
         "selections": [

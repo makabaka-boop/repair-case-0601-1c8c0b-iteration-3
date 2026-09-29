@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>广告排期 · 必播承诺排期台</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --panel: #ffffff; --ink: #1f2933; --muted: #64717d;
+    --line: #d8dee4; --accent: #1b63c6; --accent-soft: #e8f1fc;
+    --danger: #b42318; --danger-soft: #fdeceb; --ok: #067647; --ok-soft: #e7f6ef;
+    --warn: #b54708; --warn-soft: #fdf3e3;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+  }
+  header {
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    padding: 14px 24px;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main {
+    display: grid; grid-template-columns: minmax(360px, 1fr) minmax(380px, 1.2fr);
+    gap: 16px; padding: 16px 24px 32px; align-items: start;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .panel h2 { margin: 0 0 10px; font-size: 15px; }
+  label.field { display: block; font-weight: 600; margin: 10px 0 4px; }
+  textarea {
+    width: 100%; min-height: 220px; resize: vertical;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+  }
+  textarea:focus, input[type="number"]:focus { outline: 2px solid var(--accent-soft); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  input[type="number"] {
+    width: 90px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px;
+  }
+  button {
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    border-radius: 8px; padding: 8px 16px; font-size: 14px; cursor: pointer;
+  }
+  button.secondary {
+    background: #fff; color: var(--accent); border-color: var(--line);
+  }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .hint { color: var(--muted); font-size: 12px; margin: 4px 0; }
+  .windows {
+    max-height: 300px; overflow: auto; border: 1px solid var(--line);
+    border-radius: 8px; margin-top: 8px;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  th { position: sticky; top: 0; background: #f0f3f6; font-weight: 600; }
+  tr.required-row td { background: var(--accent-soft); }
+  .req-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .badge {
+    display: inline-block; font-size: 11px; padding: 1px 8px;
+    border-radius: 999px; border: 1px solid var(--line); background: #f6f8fa;
+  }
+  .badge.req { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .alert {
+    border-radius: 8px; padding: 10px 12px; margin: 10px 0; font-size: 13px;
+    border: 1px solid transparent; display: none;
+  }
+  .alert.show { display: block; }
+  .alert.error { background: var(--danger-soft); border-color: #f3beb8; color: var(--danger); }
+  .alert.warn { background: var(--warn-soft); border-color: #f2d6ad; color: var(--warn); }
+  .alert.ok { background: var(--ok-soft); border-color: #aee3c9; color: var(--ok); }
+  pre {
+    background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px;
+    font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    overflow: auto; max-height: 260px; margin: 8px 0 0;
+  }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .stale-note { color: var(--warn); font-size: 12px; font-weight: 600; }
+  .result-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .commit-zone {
+    margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line);
+  }
+  kbd {
+    background: #eef1f4; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 4px; padding: 0 5px; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>广告排期 · 必播承诺排期台</h1>
+  <p>
+    勾选 1–3 个已对客户承诺的必播片段（可不勾，按旧规则求解）。
+    求解结果由服务端在搜索过程中强制纳入必播片段后给出；
+    若承诺之间无解，服务端明确返回“不可排期”，且不会留下任何可提交的旧排期。
+  </p>
+</header>
+
+<main>
+  <section class="panel" id="input-panel">
+    <h2>1. 请求批次</h2>
+    <div class="row">
+      <label class="field" for="limit-input" style="margin:0">数量上限 limit</label>
+      <input id="limit-input" type="number" min="1" max="20" step="1" value="3">
+      <span class="hint">广告主模式：1–20</span>
+    </div>
+    <label class="field" for="payload">窗口 JSON（数组，字段 id/start/end/value/advertiser_id）</label>
+    <textarea id="payload" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button type="button" id="parse-btn" class="secondary">解析窗口 / 刷新清单</button>
+      <span class="hint">编辑 JSON 或 limit 后需重新解析；已选必播与旧结果会同时清空。</span>
+    </div>
+    <div id="parse-alert" class="alert"></div>
+
+    <h2 style="margin-top:18px">2. 必播片段（1–3 个，可不选）</h2>
+    <p class="hint">
+      必播片段允许互相时间重叠或同属一个广告主；同主片段之间需要由其他广告主的
+      片段（含零收益过渡片段）隔开。勾选超过 3 个会被阻止。
+    </p>
+    <div class="windows" id="windows-box">
+      <p class="hint" style="padding:10px">尚未解析窗口。</p>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button type="button" id="solve-btn" disabled>求解最优合法排期</button>
+      <button type="button" id="clear-req-btn" class="secondary" disabled>清空必播选择</button>
+      <span class="hint" id="req-count-text"></span>
+    </div>
+  </section>
+
+  <section class="panel" id="result-panel">
+    <h2>3. 排期结果</h2>
+    <div id="result-alert" class="alert"></div>
+    <div id="result-body" hidden>
+      <div class="result-head">
+        <div>
+          <strong id="profit-text"></strong>
+          <span class="meta" id="count-text"></span>
+        </div>
+        <span class="badge" id="required-badge"></span>
+      </div>
+      <div class="windows" style="max-height:360px">
+        <table>
+          <thead>
+            <tr><th>#</th><th>id</th><th>时段 [start, end)</th><th>报价</th>
+            <th>广告主</th><th>必播</th></tr>
+          </thead>
+          <tbody id="result-tbody"></tbody>
+        </table>
+      </div>
+      <div class="commit-zone">
+        <div class="row" style="justify-content:space-between">
+          <span class="hint">
+            提交内容即下方服务端返回的同一份合法解（页面不做任何本地增删）。
+          </span>
+          <button type="button" id="commit-btn">提交此排期</button>
+        </div>
+        <label class="field" style="margin-top:10px">提交快照（只读）</label>
+        <pre id="snapshot"></pre>
+      </div>
+    </div>
+    <p class="hint" id="empty-result">尚未求解。请先在左侧解析窗口、勾选必播片段后求解。</p>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const API_PATH = "/api/v1/advertiser-schedules";
+const MAX_REQUIRED = 3;
+
+const els = {
+  limit: document.getElementById("limit-input"),
+  payload: document.getElementById("payload"),
+  parseBtn: document.getElementById("parse-btn"),
+  clearReqBtn: document.getElementById("clear-req-btn"),
+  solveBtn: document.getElementById("solve-btn"),
+  parseAlert: document.getElementById("parse-alert"),
+  windowsBox: document.getElementById("windows-box"),
+  reqCountText: document.getElementById("req-count-text"),
+  resultAlert: document.getElementById("result-alert"),
+  resultBody: document.getElementById("result-body"),
+  emptyResult: document.getElementById("empty-result"),
+  profitText: document.getElementById("profit-text"),
+  countText: document.getElementById("count-text"),
+  requiredBadge: document.getElementById("required-badge"),
+  resultTbody: document.getElementById("result-tbody"),
+  commitBtn: document.getElementById("commit-btn"),
+  snapshot: document.getElementById("snapshot"),
+};
+
+// 页面唯一可信状态：
+//   parsedWindows  最近一次成功解析的窗口（与 limit 一起构成待提交请求）
+//   requiredIds    当前必播选择（Set）
+//   lastSolution   最近一次“成功”求解的 { request, response }，
+//                  提交只允许提交它；任何输入变化/失败都置空。
+let parsedWindows = null;
+let requiredIds = new Set();
+let lastSolution = null;
+
+// 内置示例，方便直接体验（含一条零收益过渡片段）。
+els.payload.value = JSON.stringify(
+  [
+    { id: "x1", start: 0, end: 10, value: 10, advertiser_id: "acme" },
+    { id: "bridge", start: 10, end: 12, value: 0, advertiser_id: "globex" },
+    { id: "x2", start: 12, end: 22, value: 10, advertiser_id: "acme" },
+    { id: "big", start: 0, end: 22, value: 25, advertiser_id: "initech" },
+  ],
+  null,
+  2
+);
+
+function showAlert(node, kind, html) {
+  node.className = "alert show " + kind;
+  node.innerHTML = html;
+}
+function clearAlert(node) {
+  node.className = "alert";
+  node.textContent = "";
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+// 任何会让旧解失效的变化都必须经过这里：清空可提交状态。
+function invalidateSolution(reason) {
+  lastSolution = null;
+  els.resultBody.hidden = true;
+  els.commitBtn.disabled = true;
+  els.snapshot.textContent = "";
+  if (reason) {
+    els.emptyResult.hidden = false;
+    els.emptyResult.textContent = reason;
+  }
+}
+
+function renderWindows() {
+  if (!parsedWindows) {
+    els.windowsBox.innerHTML =
+      '<p class="hint" style="padding:10px">尚未解析窗口。</p>';
+    els.solveBtn.disabled = true;
+    els.clearReqBtn.disabled = true;
+    updateReqCount();
+    return;
+  }
+  const rows = parsedWindows
+    .map((w) => {
+      const checked = requiredIds.has(w.id) ? "checked" : "";
+      const cls = requiredIds.has(w.id) ? ' class="required-row"' : "";
+      return (
+        `<tr${cls} data-id="${escapeHtml(w.id)}">` +
+        `<td><label class="req-toggle">` +
+        `<input type="checkbox" data-req="${escapeHtml(w.id)}" ${checked}>` +
+        `必播</label></td>` +
+        `<td>${escapeHtml(w.id)}</td>` +
+        `<td>${w.start} – ${w.end}</td>` +
+        `<td>${w.value}</td>` +
+        `<td><span class="badge">${escapeHtml(w.advertiser_id)}</span></td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+  els.windowsBox.innerHTML =
+    '<table><thead><tr><th>承诺</th><th>id</th><th>时段</th>' +
+    "<th>报价</th><th>广告主</th></tr></thead><tbody>" +
+    rows +
+    "</tbody></table>";
+  els.solveBtn.disabled = false;
+  els.clearReqBtn.disabled = requiredIds.size === 0;
+  updateReqCount();
+}
+
+function updateReqCount() {
+  if (!parsedWindows) {
+    els.reqCountText.textContent = "";
+    return;
+  }
+  if (requiredIds.size === 0) {
+    els.reqCountText.textContent = "未选必播：按旧规则求全局最优。";
+  } else {
+    els.reqCountText.textContent =
+      `已选 ${requiredIds.size}/${MAX_REQUIRED} 个必播片段。`;
+  }
+}
+
+// 解析窗口：严格核对字段，失败不残留任何旧窗口/必播/结果。
+els.parseBtn.addEventListener("click", () => {
+  clearAlert(els.parseAlert);
+  let raw;
+  try {
+    raw = JSON.parse(els.payload.value);
+  } catch (e) {
+    parsedWindows = null;
+    requiredIds = new Set();
+    renderWindows();
+    invalidateSolution("JSON 解析失败，旧结果已清空。");
+    showAlert(els.parseAlert, "error", "窗口 JSON 不是合法数组：" + escapeHtml(e.message));
+    return;
+  }
+  if (!Array.isArray(raw)) {
+    parsedWindows = null;
+    requiredIds = new Set();
+    renderWindows();
+    invalidateSolution("窗口字段必须是数组，旧结果已清空。");
+    showAlert(els.parseAlert, "error", "窗口 JSON 必须是数组。");
+    return;
+  }
+  const ids = new Set();
+  const dup = [];
+  for (const w of raw) {
+    if (ids.has(w.id)) dup.push(w.id);
+    ids.add(w.id);
+  }
+  if (dup.length) {
+    parsedWindows = null;
+    requiredIds = new Set();
+    renderWindows();
+    invalidateSolution("窗口 id 重复，旧结果已清空。");
+    showAlert(
+      els.parseAlert,
+      "error",
+      "窗口 id 重复：" + escapeHtml(dup.join(", ")) + "（请先在批次内去重）。",
+    );
+    return;
+  }
+  parsedWindows = raw;
+  requiredIds = new Set();
+  renderWindows();
+  invalidateSolution("已重新解析窗口，请重新求解。");
+  showAlert(
+    els.parseAlert,
+    "ok",
+    `已解析 ${raw.length} 个窗口；必播选择与旧结果已重置。`,
+  );
+});
+
+// limit / JSON 的任何手工改动立即让旧结果失效（结果只属于当时的请求）。
+els.limit.addEventListener("input", () => {
+  invalidateSolution("limit 已修改，旧结果失效，请重新求解。");
+});
+els.payload.addEventListener("input", () => {
+  // 编辑文本后，已解析窗口与必播勾选不再可信：禁用求解直到重新解析。
+  parsedWindows = null;
+  requiredIds = new Set();
+  renderWindows();
+  invalidateSolution("请求内容已修改，旧结果失效；请重新“解析窗口”。");
+  showAlert(
+    els.parseAlert,
+    "warn",
+    "窗口 JSON 已编辑：请点击“解析窗口 / 刷新清单”后再选择必播并求解。",
+  );
+});
+
+// 必播勾选：限 1–3；变化即清空旧结果。
+els.windowsBox.addEventListener("change", (ev) => {
+  const cb = ev.target.closest("input[data-req]");
+  if (!cb) return;
+  const id = cb.getAttribute("data-req");
+  if (cb.checked) {
+    if (requiredIds.size >= MAX_REQUIRED) {
+      cb.checked = false;
+      showAlert(
+        els.parseAlert,
+        "warn",
+        `最多选择 ${MAX_REQUIRED} 个必播片段；如需更换请先取消其他勾选。`,
+      );
+      return;
+    }
+    requiredIds.add(id);
+  } else {
+    requiredIds.delete(id);
+  }
+  clearAlert(els.parseAlert);
+  invalidateSolution("必播选择已变化，旧结果失效，请重新求解。");
+  // 仅更新必播高亮，不重绘 checkbox 焦点状态。
+  els.windowsBox.querySelectorAll("tr[data-id]").forEach((tr) => {
+    tr.classList.toggle("required-row", requiredIds.has(tr.getAttribute("data-id")));
+  });
+  els.clearReqBtn.disabled = requiredIds.size === 0;
+  updateReqCount();
+});
+
+els.clearReqBtn.addEventListener("click", () => {
+  requiredIds = new Set();
+  renderWindows();
+  invalidateSolution("必播选择已清空，旧结果失效，请重新求解。");
+  clearAlert(els.parseAlert);
+});
+
+function currentRequest() {
+  const req = {
+    limit: Number(els.limit.value),
+    windows: parsedWindows,
+  };
+  if (requiredIds.size > 0) {
+    req.required_ids = Array.from(requiredIds);
+  }
+  return req;
+}
+
+async function solve() {
+  clearAlert(els.resultAlert);
+  const request = currentRequest();
+  let status = 0;
+  let body = null;
+  try {
+    const resp = await fetch(API_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    status = resp.status;
+    body = await resp.json();
+  } catch (e) {
+    // 网络/服务异常同样不得残留旧排期。
+    invalidateSolution("求解请求失败，旧结果已清空。");
+    showAlert(els.resultAlert, "error", "请求失败：" + escapeHtml(e.message));
+    return;
+  }
+
+  // 无论 422（含不可排期）还是其它错误：清空，绝不可提交旧排期。
+  if (status !== 200) {
+    invalidateSolution();
+    const code = body && body.error ? body.error.code : "UNKNOWN";
+    let msg;
+    if (code === "UNSCHEDULABLE") {
+      const ids =
+        (body.error.details[0].params || {}).required_ids || request.required_ids || [];
+      msg =
+        "<strong>不可排期（UNSCHEDULABLE）。</strong>" +
+        "必播承诺之间不存在合法排期（可能互相时间重叠、同主且无可用隔断，" +
+        "或名额不足）。未返回任何部分方案；请调整必播片段后重新求解。" +
+        '<div class="meta">必播：' +
+        escapeHtml((ids || []).join(", ")) +
+        "</div>";
+      showAlert(els.resultAlert, "error", msg);
+    } else {
+      const details = (body && body.error && body.error.details) || [];
+      const text = details
+        .map((d) => {
+          const loc = (d.loc || []).join(" → ");
+          return `<code>${escapeHtml(d.code || "")}</code>` +
+                 (loc ? ` @ <code>${escapeHtml(loc)}</code>` : "") +
+                 (d.message ? "：" + escapeHtml(d.message) : "");
+        })
+        .join("<br>");
+      showAlert(
+        els.resultAlert,
+        "error",
+        `<strong>请求被拒绝（${escapeHtml(code)}）。</strong>` +
+          (text ? "<br>" + text : "") +
+          "<br>旧排期已清空，没有可提交的内容。",
+      );
+    }
+    els.emptyResult.hidden = false;
+    els.emptyResult.textContent = "本次求解失败，请修正后重试。";
+    return;
+  }
+
+  // 唯一可提交状态：本次成功响应 + 产生它的请求。
+  lastSolution = { request, response: body };
+  renderSolution();
+}
+
+function renderSolution() {
+  const { request, response } = lastSolution;
+  const reqIds = new Set(request.required_ids || []);
+  // 展示用的时段/报价直接取自本次请求体中同 id 的窗口（响应只回 id+广告主）；
+  // 解本身（id 序列与收益）完全以服务端响应为准，页面不做任何增删。
+  const byId = new Map(request.windows.map((w) => [w.id, w]));
+  els.emptyResult.hidden = true;
+  els.resultBody.hidden = false;
+  clearAlert(els.resultAlert);
+  showAlert(
+    els.resultAlert,
+    "ok",
+    reqIds.size
+      ? `已在搜索过程中强制纳入 ${reqIds.size} 个必播片段，得到收益最高的合法排期。`
+      : "未指定必播片段，按旧规则求得全局最优合法排期。",
+  );
+  els.profitText.textContent = "总收益 profit = " + response.profit;
+  els.countText.textContent =
+    `共 ${response.selections.length} 条` +
+    (request.required_ids ? "（含全部必播承诺）" : "");
+  els.requiredBadge.textContent = reqIds.size
+    ? `必播 ×${reqIds.size}`
+    : "无必播承诺";
+  els.requiredBadge.className = "badge" + (reqIds.size ? " req" : "");
+
+  els.resultTbody.innerHTML = response.selections
+    .map((s, idx) => {
+      const isReq = reqIds.has(s.id);
+      const w = byId.get(s.id);
+      const span = w ? `${w.start} – ${w.end}` : "—";
+      const val = w ? String(w.value) : "—";
+      return (
+        `<tr${isReq ? ' class="required-row"' : ""}>` +
+        `<td>${idx + 1}</td><td>${escapeHtml(s.id)}</td>` +
+        `<td>${span}</td><td>${val}</td>` +
+        `<td><span class="badge">${escapeHtml(s.advertiser_id)}</span></td>` +
+        `<td>${isReq ? '<span class="badge req">必播</span>' : ""}</td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+
+  els.snapshot.textContent = JSON.stringify(
+    { request: request, response: response },
+    null,
+    2,
+  );
+  els.commitBtn.disabled = false;
+}
+
+els.solveBtn.addEventListener("click", () => {
+  const limit = Number(els.limit.value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) {
+    invalidateSolution();
+    showAlert(els.resultAlert, "error", "limit 必须是 1–20 的整数。");
+    return;
+  }
+  solve();
+});
+
+els.commitBtn.addEventListener("click", () => {
+  // 提交只可能提交 lastSolution（按钮在任何失效路径上都已禁用）。
+  if (!lastSolution) {
+    showAlert(els.resultAlert, "error", "没有可提交的排期：请先成功求解。");
+    return;
+  }
+  const ids = lastSolution.response.selections.map((s) => s.id);
+  const ok = window.confirm(
+    "确认提交以下合法排期？\n\n" +
+      ("总收益：" + lastSolution.response.profit + "\n") +
+      ("片段：" + ids.join(", ") + "\n") +
+      ("必播：" + ((lastSolution.request.required_ids || []).join(", ") || "无")),
+  );
+  if (!ok) return;
+  els.commitBtn.disabled = true;
+  els.commitBtn.textContent = "已提交";
+  showAlert(
+    els.resultAlert,
+    "ok",
+    "排期已提交（提交快照见下方，与服务端返回为同一份合法解）。",
+  );
+});
+</script>
+</body>
+</html>

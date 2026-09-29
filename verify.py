@@ -12,7 +12,8 @@
   5. 重复 id 整体拒绝（稳定错误码 DUPLICATE_ID）
   6. 越界字段拒绝（start >= end）
   7. 最大输入 20 万窗口，唯一最优 50 * 1e9，并可重算
-
+  8. 必播承诺：强制纳入（含零收益同主隔断）、必播互斥不可排期、
+     不存在的必播 id 参数错误
 任一断言失败以非零码退出。
 """
 
@@ -156,6 +157,81 @@ def main():
         {"limit": 50, "windows": windows}, timeout=180,
     )
     check("optimum is reproducible", status2 == 200 and body2 == body, str(body2)[:300])
+
+    # ------------------------------------------------------------------
+    # 必播承诺（广告主约束接口）
+    # ------------------------------------------------------------------
+    ad_path = "/api/v1/advertiser-schedules"
+
+    # 强制纳入两条同主必播：零收益的其他广告主过渡片段必须被裁决进来，
+    # 而无承诺时最优是独占大窗 big=25。
+    status, body = request(
+        base_url, "POST", ad_path,
+        {
+            "limit": 3,
+            "windows": [
+                {"id": "x1", "start": 0, "end": 10, "value": 10,
+                 "advertiser_id": "acme"},
+                {"id": "bridge", "start": 10, "end": 12, "value": 0,
+                 "advertiser_id": "globex"},
+                {"id": "x2", "start": 12, "end": 22, "value": 10,
+                 "advertiser_id": "acme"},
+                {"id": "big", "start": 0, "end": 22, "value": 25,
+                 "advertiser_id": "initech"},
+            ],
+            "required_ids": ["x1", "x2"],
+        },
+    )
+    check(
+        "required same-owner pair forces zero-value bridge",
+        status == 200
+        and body.get("profit") == 20
+        and [s["id"] for s in body.get("selections", [])] == ["x1", "bridge", "x2"],
+        str(body),
+    )
+
+    # 承诺之间无解（必播时间重叠）：明确不可排期，不给出部分方案。
+    status, body = request(
+        base_url, "POST", ad_path,
+        {
+            "limit": 3,
+            "windows": [
+                {"id": "a", "start": 0, "end": 10, "value": 10,
+                 "advertiser_id": "X"},
+                {"id": "b", "start": 5, "end": 15, "value": 10,
+                 "advertiser_id": "Y"},
+            ],
+            "required_ids": ["a", "b"],
+        },
+    )
+    check(
+        "conflicting required ids return UNSCHEDULABLE without partial plan",
+        status == 422
+        and body.get("error", {}).get("code") == "UNSCHEDULABLE"
+        and "selections" not in body,
+        str(body),
+    )
+
+    # 不存在的必播 id：参数错误（VALIDATION_FAILED / REQUIRED_ID_NOT_FOUND）。
+    status, body = request(
+        base_url, "POST", ad_path,
+        {
+            "limit": 3,
+            "windows": [
+                {"id": "a", "start": 0, "end": 10, "value": 10,
+                 "advertiser_id": "X"},
+            ],
+            "required_ids": ["ghost"],
+        },
+    )
+    codes = [d["code"] for d in body.get("error", {}).get("details", [])]
+    check(
+        "unknown required id rejected as parameter error",
+        status == 422
+        and body.get("error", {}).get("code") == "VALIDATION_FAILED"
+        and "REQUIRED_ID_NOT_FOUND" in codes,
+        str(body),
+    )
 
     print("\nALL VERIFY CHECKS PASSED")
 
