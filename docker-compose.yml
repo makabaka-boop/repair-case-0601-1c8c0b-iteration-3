@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    image: interval-scheduling-api:latest
+    ports:
+      # 宿主端口读取 API_PORT，容器内固定监听 8000
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  verify:
+    # 验收服务：启动 api 并对其执行 verify.py，成功即退出 0
+    image: interval-scheduling-api:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_PORT: "8000"
+    entrypoint: ["python", "verify.py", "http://api:8000"]
+    profiles: ["verify"]
+    restart: "no"
