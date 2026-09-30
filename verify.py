@@ -11,7 +11,11 @@
   4. 同分裁决（编号最小，且与输入顺序无关）
   5. 重复 id 整体拒绝（稳定错误码 DUPLICATE_ID）
   6. 越界字段拒绝（start >= end）
-  7. 最大输入 20 万窗口，唯一最优 50 * 1e9，并可重算
+  7. 承诺必播：零收益过渡片段被强制纳入
+  8. 承诺必播：必播互相重叠 -> 409 NO_FEASIBLE_SCHEDULE，无部分方案
+  9. 承诺必播：重复/不存在 id -> 422 参数错误
+ 10. 运营页面 GET / 可访问
+ 11. 最大输入 20 万窗口，唯一最优 50 * 1e9，并可重算
 
 任一断言失败以非零码退出。
 """
@@ -130,6 +134,72 @@ def main():
     codes = [d["code"] for d in body.get("error", {}).get("details", [])]
     check("start>=end rejected with stable code",
           status == 422 and "INVALID_INTERVAL" in codes, str(body))
+
+    # --- 承诺必播（广告主约束接口） ---
+    adv_path = "/api/v1/advertiser-schedules"
+
+    # 两条 X 主必播之间必须插入零收益 Y 过渡片段
+    status, body = request(
+        base_url, "POST", adv_path,
+        {"limit": 3, "windows": [
+            {"id": "a", "start": 0, "end": 10, "value": 100, "advertiser_id": "X"},
+            {"id": "z", "start": 10, "end": 20, "value": 0, "advertiser_id": "Y"},
+            {"id": "b", "start": 20, "end": 30, "value": 100, "advertiser_id": "X"},
+        ], "required_ids": ["a", "b"]},
+    )
+    check("required pair forces zero-value bridge",
+          status == 200
+          and body.get("profit") == 200
+          and [s["id"] for s in body.get("selections", [])] == ["a", "z", "b"],
+          str(body))
+
+    # 必播互相重叠（广告主不同也不行）：409 不可排期，无部分方案
+    status, body = request(
+        base_url, "POST", adv_path,
+        {"limit": 2, "windows": [
+            {"id": "a", "start": 0, "end": 10, "value": 10, "advertiser_id": "X"},
+            {"id": "b", "start": 5, "end": 15, "value": 10, "advertiser_id": "Y"},
+        ], "required_ids": ["a", "b"]},
+    )
+    check("overlapping required windows yield NO_FEASIBLE_SCHEDULE",
+          status == 409
+          and body.get("error", {}).get("code") == "NO_FEASIBLE_SCHEDULE"
+          and "selections" not in body,
+          str(body))
+
+    # 必播列表重复 / 不存在：422 参数错误（而非 409）
+    status, body = request(
+        base_url, "POST", adv_path,
+        {"limit": 2, "windows": [
+            {"id": "a", "start": 0, "end": 10, "value": 1, "advertiser_id": "X"},
+        ], "required_ids": ["a", "a"]},
+    )
+    codes = [d["code"] for d in body.get("error", {}).get("details", [])]
+    check("duplicate required ids rejected",
+          status == 422 and "REQUIRED_DUPLICATE_ID" in codes, str(body))
+
+    status, body = request(
+        base_url, "POST", adv_path,
+        {"limit": 2, "windows": [
+            {"id": "a", "start": 0, "end": 10, "value": 1, "advertiser_id": "X"},
+        ], "required_ids": ["ghost"]},
+    )
+    codes = [d["code"] for d in body.get("error", {}).get("details", [])]
+    check("unknown required id rejected",
+          status == 422 and "REQUIRED_UNKNOWN_ID" in codes, str(body))
+
+    # 运营页面可访问，且含必播与服务端解选择态的关键内容
+    status, body_text = None, ""
+    req = urllib.request.Request(base_url + "/", method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status = resp.status
+            body_text = resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+    check("scheduling page served",
+          status == 200 and "承诺必播" in body_text and "required_ids" in body_text,
+          str(status))
 
     # 最大输入
     windows = build_max_batch()

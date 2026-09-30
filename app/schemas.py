@@ -7,7 +7,12 @@
   - start_end_order_error
   - duplicate_window_id
   - too_many_windows
+  - required_too_many
+  - required_duplicate_id
+  - required_unknown_id
 """
+
+from typing import Optional
 
 from pydantic import (
     BaseModel,
@@ -22,6 +27,7 @@ from pydantic_core import PydanticCustomError
 from .solver import (
     AD_MAX_ADVERTISERS,
     AD_MAX_LIMIT,
+    AD_MAX_REQUIRED,
     AD_MAX_WINDOWS,
     MAX_LIMIT,
     MAX_TIME_MS,
@@ -33,6 +39,9 @@ ERR_START_END_ORDER = "start_end_order_error"
 ERR_DUPLICATE_ID = "duplicate_window_id"
 ERR_TOO_MANY_WINDOWS = "too_many_windows"
 ERR_TOO_MANY_ADVERTISERS = "too_many_advertisers"
+ERR_REQUIRED_TOO_MANY = "required_too_many"
+ERR_REQUIRED_DUPLICATE = "required_duplicate_id"
+ERR_REQUIRED_UNKNOWN = "required_unknown_id"
 
 # 错误信息里重复 id 最多列出的数量，避免响应体无界
 _REPORT_LIMIT = 100
@@ -109,6 +118,11 @@ class AdvertiserBatch(BaseModel):
 
     limit: StrictInt = Field(ge=1, le=AD_MAX_LIMIT)
     windows: list[AdvertiserWindow]
+    # 可选的承诺必播片段 id（1..3 个、互不重复、必须存在于 windows）。
+    # 不传或为 None 时旧请求行为完全不变；空列表等价于不提供。
+    required_ids: Optional[list[StrictStr]] = Field(
+        default=None, min_length=0
+    )
 
     @model_validator(mode="after")
     def _validate_batch(self):
@@ -151,4 +165,41 @@ class AdvertiserBatch(BaseModel):
                     "actual": len(advertisers),
                 },
             )
+
+        required = self.required_ids
+        if required is not None:
+            if len(required) > AD_MAX_REQUIRED:
+                raise PydanticCustomError(
+                    ERR_REQUIRED_TOO_MANY,
+                    "required_ids supports at most {max_required} entries",
+                    {
+                        "max_required": AD_MAX_REQUIRED,
+                        "actual": len(required),
+                    },
+                )
+            req_seen: set[str] = set()
+            req_dup: set[str] = set()
+            for wid in required:
+                if wid in req_seen:
+                    req_dup.add(wid)
+                else:
+                    req_seen.add(wid)
+            if req_dup:
+                raise PydanticCustomError(
+                    ERR_REQUIRED_DUPLICATE,
+                    "required_ids contains duplicate id(s): {ids}",
+                    {"ids": ", ".join(sorted(req_dup))},
+                )
+            unknown = [wid for wid in required if wid not in seen]
+            if unknown:
+                shown = unknown[:_REPORT_LIMIT]
+                extra = len(unknown) - len(shown)
+                detail = ", ".join(shown)
+                if extra:
+                    detail += f" (and {extra} more)"
+                raise PydanticCustomError(
+                    ERR_REQUIRED_UNKNOWN,
+                    "required_ids contains id(s) not present in windows: {ids}",
+                    {"ids": detail, "unknown_count": len(unknown)},
+                )
         return self

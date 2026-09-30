@@ -8,16 +8,20 @@
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .schemas import (
     AdvertiserBatch,
     Batch,
     ERR_DUPLICATE_ID,
+    ERR_REQUIRED_DUPLICATE,
+    ERR_REQUIRED_TOO_MANY,
+    ERR_REQUIRED_UNKNOWN,
     ERR_TOO_MANY_ADVERTISERS,
     ERR_TOO_MANY_WINDOWS,
 )
@@ -30,6 +34,9 @@ _CODE_MAP = {
     ERR_DUPLICATE_ID: "DUPLICATE_ID",
     ERR_TOO_MANY_WINDOWS: "TOO_MANY_WINDOWS",
     ERR_TOO_MANY_ADVERTISERS: "TOO_MANY_ADVERTISERS",
+    ERR_REQUIRED_TOO_MANY: "REQUIRED_TOO_MANY",
+    ERR_REQUIRED_DUPLICATE: "REQUIRED_DUPLICATE_ID",
+    ERR_REQUIRED_UNKNOWN: "REQUIRED_UNKNOWN_ID",
     "start_end_order_error": "INVALID_INTERVAL",
     "missing": "MISSING_FIELD",
     "value_error": "INVALID_VALUE",
@@ -44,6 +51,9 @@ _CODE_MAP = {
     "json_invalid": "INVALID_JSON",
     "json_type": "INVALID_JSON",
 }
+
+# 模型级必播校验错误的统一字段定位。
+_REQUIRED_LOC = ("required_ids",)
 
 
 def _stable_code(error_type: str) -> str:
@@ -92,6 +102,12 @@ async def _on_validation_error(request: Request, exc: RequestValidationError):
             d["loc"] = ["windows"]
         if d["code"] == "TOO_MANY_ADVERTISERS" and not loc:
             d["loc"] = ["windows"]
+        if (
+            d["code"]
+            in ("REQUIRED_TOO_MANY", "REQUIRED_DUPLICATE_ID", "REQUIRED_UNKNOWN_ID")
+            and tuple(loc) != _REQUIRED_LOC
+        ):
+            d["loc"] = list(_REQUIRED_LOC)
 
     status = 400 if any(d["code"] == "INVALID_JSON" for d in details) else 422
     return JSONResponse(
@@ -125,6 +141,15 @@ async def healthz():
     return {"status": "ok"}
 
 
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    # 运营排期页面：入选/必播选择态只展示求解接口返回的同一份合法解。
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
 @app.post("/api/v1/schedules")
 async def create_schedule(batch: Batch):
     windows = [
@@ -143,11 +168,37 @@ async def create_advertiser_schedule(batch: AdvertiserBatch):
         (w.id, w.start, w.end, w.value, w.advertiser_id)
         for w in batch.windows
     ]
-    # 纯 CPU：排序 O(n log n) + DP O(n * limit * A)（n<=2000, limit<=20, A<=8），
-    # 放到线程池避免阻塞事件循环。
-    profit, selections = await asyncio.get_running_loop().run_in_executor(
-        None, solve_with_advertisers, batch.limit, windows
+    # 纯 CPU：排序 O(n log n) + DP O(n * limit * A * 2^r)
+    # （n<=2000, limit<=20, A<=8, r=必播数<=3），放到线程池避免阻塞事件循环。
+    result = await asyncio.get_running_loop().run_in_executor(
+        None,
+        solve_with_advertisers,
+        batch.limit,
+        windows,
+        batch.required_ids,
     )
+    if result is None:
+        # 承诺必播之间确实无合法排期：明确不可排期，不输出任何部分方案。
+        # 服务无状态，失败不会残留旧排期（页面侧同样清空可提交选择态）。
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": "NO_FEASIBLE_SCHEDULE",
+                    "details": [
+                        {
+                            "loc": ["required_ids"],
+                            "message": (
+                                "no legal schedule covers all required windows "
+                                "under the overlap, adjacency and limit rules"
+                            ),
+                            "params": {"required_ids": list(batch.required_ids)},
+                        }
+                    ],
+                }
+            },
+        )
+    profit, selections = result
     return {
         "profit": profit,
         "selections": [

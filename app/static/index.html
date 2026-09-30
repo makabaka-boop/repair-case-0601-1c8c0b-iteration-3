@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>广告排期台 · 承诺必播</title>
+<style>
+  :root { --line:#d9dee7; --ink:#1f2733; --muted:#66707d; --brand:#1d5fd0;
+          --ok-bg:#e9f6ec; --ok-ink:#1b6e34; --bad-bg:#fdecec; --bad-ink:#9c2323;
+          --req:#b76b00; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+         color: var(--ink); background: #f4f6f9; }
+  header { padding: 18px 24px; background: #fff; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 18px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: minmax(340px, 460px) 1fr; gap: 18px;
+         padding: 18px 24px; align-items: start; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+          padding: 16px 18px; }
+  .card h2 { margin: 0 0 12px; font-size: 15px; }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .row label { color: var(--muted); }
+  input[type=number] { width: 80px; padding: 5px 8px; border: 1px solid var(--line);
+                       border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #eef1f5; text-align: left;
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; background: #fafbfd; position: sticky;
+       top: 0; }
+  td input { width: 100%; min-width: 64px; padding: 3px 6px; border: 1px solid transparent;
+             border-radius: 5px; background: transparent; font: inherit; }
+  td input:focus { border-color: var(--brand); background: #fff; outline: none; }
+  .tablewrap { max-height: 360px; overflow: auto; border: 1px solid #eef1f5;
+               border-radius: 8px; }
+  button { font: inherit; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line);
+           background: #fff; cursor: pointer; }
+  button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.small { padding: 2px 9px; font-size: 12px; }
+  .reqbox { text-align: center; }
+  .reqbox input { transform: scale(1.15); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .banner { margin: 0 0 12px; padding: 9px 12px; border-radius: 8px; font-size: 13px;
+            display: none; white-space: pre-wrap; }
+  .banner.ok { display: block; background: var(--ok-bg); color: var(--ok-ink); }
+  .banner.bad { display: block; background: var(--bad-bg); color: var(--bad-ink); }
+  .pick-yes { background: var(--ok-bg); color: var(--ok-ink); font-weight: 600;
+              text-align: center; border-radius: 4px; }
+  .pick-no { color: #c3c9d2; text-align: center; }
+  .reqtag { color: var(--req); font-size: 11px; margin-left: 4px; }
+  .muted { color: var(--muted); }
+  code { background: #f1f3f7; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>广告排期台</h1>
+  <p>按时段相容、相邻广告主不同、名额上限求收益最高的唯一合法排期；
+     承诺必播片段在求解中强制包含（最多 3 个）。</p>
+</header>
+
+<main>
+  <section class="card" id="editor-card">
+    <h2>排期输入</h2>
+    <div class="row">
+      <label for="limit">名额上限</label>
+      <input id="limit" type="number" min="1" max="20" step="1" value="4" />
+      <span class="hint">1–20</span>
+    </div>
+    <div class="tablewrap">
+      <table id="input-table">
+        <thead>
+          <tr>
+            <th style="width:120px">片段 id</th>
+            <th style="width:86px">start</th>
+            <th style="width:86px">end</th>
+            <th style="width:80px">报价</th>
+            <th style="width:92px">广告主</th>
+            <th style="width:64px">承诺必播</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button type="button" id="add-row" class="small">+ 添加片段</button>
+      <span class="hint" id="req-hint">已承诺 0 / 3 个</span>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button type="button" id="solve" class="primary">求最优合法排期</button>
+    </div>
+    <div class="banner" id="banner"></div>
+  </section>
+
+  <section class="card" id="result-card">
+    <h2>当前合法排期</h2>
+    <div class="row">
+      <strong id="profit" class="muted">尚未求解</strong>
+    </div>
+    <div class="tablewrap">
+      <table id="result-table">
+        <thead>
+          <tr>
+            <th style="width:52px">入选</th>
+            <th>片段 id</th>
+            <th style="width:90px">start–end</th>
+            <th style="width:80px">报价</th>
+            <th style="width:110px">广告主</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint">入选态只来自求解接口返回的同一份合法解；输入任何改动都会立即使
+       下方排期失效。求解失败（含承诺不可排期）时清空选择态，不能提交旧排期。</p>
+    <div class="row" style="margin-top:6px">
+      <button type="button" id="commit" disabled>提交该排期</button>
+      <span class="hint" id="commit-state"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+var MAX_REQUIRED = 3;
+var rows = [];          // {id,start,end,value,advertiser,required}
+var schedule = null;    // 最近一次服务端返回的合法解 {profit, selections}
+var dirty = true;       // 输入相对最近一次求解是否已改动（旧解不得残留可提交）
+
+var inputBody = document.querySelector("#input-table tbody");
+var resultBody = document.querySelector("#result-table tbody");
+var banner = document.getElementById("banner");
+var solveBtn = document.getElementById("solve");
+var commitBtn = document.getElementById("commit");
+var limitInput = document.getElementById("limit");
+var profitEl = document.getElementById("profit");
+var reqHint = document.getElementById("req-hint");
+var commitState = document.getElementById("commit-state");
+
+function markDirty() {
+  dirty = true;
+  renderResult();
+}
+
+function addRow(preset) {
+  rows.push(Object.assign(
+    { id: "", start: 0, end: 10, value: 0, advertiser: "", required: false },
+    preset || {}));
+  markDirty();
+  renderInputs();
+}
+
+function renderInputs() {
+  inputBody.innerHTML = "";
+  rows.forEach(function (row, idx) {
+    var tr = document.createElement("tr");
+    tr.appendChild(textCell(row.id, function (v) { row.id = v; markDirty(); }));
+    tr.appendChild(numCell(row.start, function (v) { row.start = v; markDirty(); }));
+    tr.appendChild(numCell(row.end, function (v) { row.end = v; markDirty(); }));
+    tr.appendChild(numCell(row.value, function (v) { row.value = v; markDirty(); }));
+    tr.appendChild(textCell(row.advertiser, function (v) {
+      row.advertiser = v; markDirty();
+    }));
+
+    var tdReq = document.createElement("td");
+    tdReq.className = "reqbox";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!row.required;
+    cb.addEventListener("change", function () {
+      var count = rows.filter(function (r) { return r.required; }).length;
+      if (cb.checked && count >= MAX_REQUIRED) {
+        cb.checked = false;
+        showBanner("bad", "最多只能承诺 " + MAX_REQUIRED + " 个必播片段。");
+        return;
+      }
+      row.required = cb.checked;
+      clearBanner();
+      reqHint.textContent = "已承诺 " +
+        rows.filter(function (r) { return r.required; }).length +
+        " / " + MAX_REQUIRED + " 个";
+      markDirty();
+    });
+    tdReq.appendChild(cb);
+    tr.appendChild(tdReq);
+
+    var tdDel = document.createElement("td");
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "small";
+    del.textContent = "删除";
+    del.addEventListener("click", function () {
+      rows.splice(idx, 1);
+      markDirty();
+      renderInputs();
+    });
+    tdDel.appendChild(del);
+    tr.appendChild(tdDel);
+    inputBody.appendChild(tr);
+  });
+  reqHint.textContent = "已承诺 " +
+    rows.filter(function (r) { return r.required; }).length +
+    " / " + MAX_REQUIRED + " 个";
+}
+
+function textCell(value, oninput) {
+  var td = document.createElement("td");
+  var inp = document.createElement("input");
+  inp.type = "text";
+  inp.value = value;
+  inp.addEventListener("input", function () { oninput(inp.value); });
+  td.appendChild(inp);
+  return td;
+}
+function numCell(value, oninput) {
+  var td = document.createElement("td");
+  var inp = document.createElement("input");
+  inp.type = "number";
+  inp.step = "1";
+  inp.value = value;
+  inp.addEventListener("input", function () {
+    oninput(inp.value === "" ? NaN : Number(inp.value));
+  });
+  td.appendChild(inp);
+  return td;
+}
+
+function showBanner(kind, text) {
+  banner.className = "banner " + kind;
+  banner.textContent = text;
+}
+function clearBanner() {
+  banner.className = "banner";
+  banner.textContent = "";
+}
+
+function renderResult() {
+  resultBody.innerHTML = "";
+  if (!schedule) {
+    profitEl.textContent = dirty ? "尚未求解" : "无合法排期";
+    profitEl.className = "muted";
+    commitBtn.disabled = true;
+    commitState.textContent = dirty
+      ? "输入已改动，请重新求解。"
+      : "没有可提交的排期。";
+    return;
+  }
+  profitEl.textContent = "总收益 " + schedule.profit;
+  profitEl.className = "";
+  var selected = {};
+  schedule.selections.forEach(function (s) { selected[s.id] = s; });
+  rows.forEach(function (row) {
+    var sel = selected[row.id];
+    var tr = document.createElement("tr");
+    var tdPick = document.createElement("td");
+    tdPick.textContent = sel ? "✓" : "";
+    tdPick.className = sel ? "pick-yes" : "pick-no";
+    tr.appendChild(tdPick);
+
+    var tdId = document.createElement("td");
+    tdId.textContent = row.id;
+    if (row.required) {
+      var tag = document.createElement("span");
+      tag.className = "reqtag";
+      tag.textContent = "必播";
+      tdId.appendChild(tag);
+    }
+    tr.appendChild(tdId);
+
+    tr.appendChild(plainCell(row.start + "–" + row.end));
+    tr.appendChild(plainCell(String(row.value)));
+    tr.appendChild(plainCell(sel ? sel.advertiser_id : row.advertiser));
+    resultBody.appendChild(tr);
+  });
+  commitBtn.disabled = dirty;
+  commitState.textContent = dirty ? "输入已改动，请重新求解后再提交。"
+                                  : "排期与服务端解一致，可提交。";
+}
+
+function plainCell(text) {
+  var td = document.createElement("td");
+  td.textContent = text;
+  return td;
+}
+
+function buildPayload() {
+  return {
+    limit: Number(limitInput.value),
+    windows: rows.map(function (r) {
+      return {
+        id: r.id, start: r.start, end: r.end, value: r.value,
+        advertiser_id: r.advertiser,
+      };
+    }),
+    required_ids: rows.filter(function (r) { return r.required; })
+                      .map(function (r) { return r.id; }),
+  };
+}
+
+solveBtn.addEventListener("click", async function () {
+  var payload;
+  try {
+    payload = buildPayload();
+  } catch (e) {
+    showBanner("bad", String(e));
+    return;
+  }
+  solveBtn.disabled = true;
+  try {
+    var resp = await fetch("/api/v1/advertiser-schedules", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    var body = await resp.json();
+    if (resp.status === 200) {
+      // 唯一事实来源：选择态完全以服务端合法解重建，不做任何本地拼装。
+      schedule = { profit: body.profit, selections: body.selections };
+      dirty = false;
+      clearBanner();
+      var reqCount = payload.required_ids.length;
+      var more = reqCount ? "（已强制包含 " + reqCount + " 个承诺片段）" : "";
+      showBanner("ok", "已求得收益最高的合法排期，总收益 " + body.profit + more);
+    } else {
+      // 参数错误或承诺不可排期：清空旧解与可提交状态，绝不残留旧排期。
+      schedule = null;
+      dirty = false;
+      var err = body.error || {};
+      var lines = [];
+      if (err.code === "NO_FEASIBLE_SCHEDULE") {
+        lines.push("承诺必播之间确实无合法排期（重叠 / 相邻规则 / 名额），" +
+                   "未给出部分方案。请调整承诺后重新求解。");
+      } else {
+        lines.push("请求被拒绝（" + err.code + "）：");
+        (err.details || []).forEach(function (d) {
+          lines.push("• " + d.loc.join(".") + " — " + d.message);
+        });
+      }
+      showBanner("bad", lines.join("\n"));
+    }
+  } catch (e) {
+    schedule = null;
+    dirty = true;
+    showBanner("bad", "求解请求失败：" + e);
+  } finally {
+    solveBtn.disabled = false;
+    renderResult();
+  }
+});
+
+commitBtn.addEventListener("click", function () {
+  if (dirty || !schedule) { return; }  // 双重保险：失效旧排期不可提交
+  commitState.textContent = "已提交：" + schedule.selections.length +
+    " 条片段，总收益 " + schedule.profit + "（提交内容即上方服务端解）。";
+  commitBtn.disabled = true;
+});
+
+limitInput.addEventListener("input", markDirty);
+document.getElementById("add-row").addEventListener("click", function () {
+  addRow();
+});
+
+// 预置一组演示数据：两条 X 主必播，需要零价 Y 过渡片段才合法。
+[
+  { id: "a", start: 0, end: 10, value: 100, advertiser: "X", required: true },
+  { id: "bridge", start: 10, end: 20, value: 0, advertiser: "Y" },
+  { id: "b", start: 20, end: 30, value: 100, advertiser: "X", required: true },
+  { id: "c", start: 30, end: 40, value: 5, advertiser: "Y" },
+].forEach(addRow);
+renderInputs();
+renderResult();
+</script>
+</body>
+</html>
